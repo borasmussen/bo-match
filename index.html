@@ -1,13 +1,280 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="da">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Bo's finurlige matchopsætning</title>
-<link rel="manifest" href="manifest.webmanifest">
-</head>
-<body>
-<div id="root"></div>
-<script src="app.js"></script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bo's finurlige matchopsætning</title>
+
+    <link rel="manifest" href="manifest.webmanifest" />
+    <meta name="theme-color" content="#0f172a" />
+    <link rel="apple-touch-icon" href="icon-192.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  </head>
+  <body class="bg-slate-50 min-h-screen">
+    <div id="root"></div>
+
+    <script>
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => navigator.serviceWorker.register("sw.js?v=5"));
+      }
+    </script>
+
+    <script type="text/babel">
+      const { useState, useEffect, useMemo } = React;
+
+      const STORAGE_KEY = "bo_match_roster_v1";
+      const DEFAULT_NAMES = ["Bent","Bo","Hans Jørgen","Henning","Jan","Kaj","Karsten","Lene","Martin","Morten","Niels","Ole","Orla","Ove","Peer","Poul","Pimse","Robert","Tage","Viggo","Pia"];
+
+      function TennisBallIcon({ size = 28 }) {
+        return (
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width={size} height={size} aria-hidden>
+            <defs>
+              <radialGradient id="tbGrad" cx="35%" cy="35%" r="70%">
+                <stop offset="0%" stopColor="#e9ff70" />
+                <stop offset="60%" stopColor="#ccff00" />
+                <stop offset="100%" stopColor="#a0d91a" />
+              </radialGradient>
+            </defs>
+            <circle cx="50" cy="50" r="48" fill="url(#tbGrad)" stroke="#86a341" strokeWidth="2" />
+            <path d="M 2 50 a 48 48 0 0 1 96 0" fill="none" stroke="#f8fafc" strokeWidth="5" strokeLinecap="round" />
+            <path d="M 98 50 a 48 48 0 0 1 -96 0" fill="none" stroke="#f8fafc" strokeWidth="5" strokeLinecap="round" />
+          </svg>
+        );
+      }
+
+      function TeamChip({ name }) {
+        return <div className="px-2 py-1 bg-red-600 rounded text-white text-sm font-medium">{name}</div>;
+      }
+
+      function App() {
+        const [roster, setRoster] = useState(DEFAULT_NAMES);
+        const [setupPlayers, setSetupPlayers] = useState(() => DEFAULT_NAMES.map((name, i) => ({ id: i + 1, name, enabled: true })));
+        const [cards, setCards] = useState([]);
+        const [usedGroups, setUsedGroups] = useState([]);
+        const [phase, setPhase] = useState("setup");
+        const [showRosterEditor, setShowRosterEditor] = useState(false);
+        const [newName, setNewName] = useState("");
+
+        const enabledPlayers = useMemo(() => setupPlayers.filter(p => p.enabled), [setupPlayers]);
+
+        function shuffle(array) {
+          const a = array.slice();
+          for (let i = a.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [a[i], a[j]] = [a[j], a[i]];
+          }
+          return a;
+        }
+
+        useEffect(() => {
+          try {
+            const raw = localStorage.getItem(STORAGE_KEY);
+            if (!raw) return;
+            const saved = JSON.parse(raw);
+            if (Array.isArray(saved) && saved.every(x => typeof x === "string")) {
+              setRoster(saved);
+              setSetupPlayers(saved.map((name, i) => ({ id: i + 1, name, enabled: true })));
+            }
+          } catch {}
+        }, []);
+
+        useEffect(() => {
+          if (phase !== "setup") return;
+          setSetupPlayers(roster.map((name, i) => ({ id: i + 1, name, enabled: true })));
+        }, [roster, phase]);
+
+        function togglePlayer(id) {
+          setSetupPlayers(prev => prev.map(p => (p.id === id ? { ...p, enabled: !p.enabled } : p)));
+        }
+
+        function startRound() {
+          if (enabledPlayers.length === 0) return;
+          const initial = shuffle(enabledPlayers).map((p, idx) => ({ id: idx + 1, name: p.name, revealed: false, selected: false }));
+          setCards(initial);
+          setUsedGroups([]);
+          setPhase("picking");
+        }
+
+        function resetRound() {
+          setCards(prev => shuffle(prev).map(c => ({ ...c, revealed: false, selected: false })));
+          setPhase("picking");
+        }
+
+        function handleCardClick(id) {
+          if (phase !== "picking") return;
+          setCards(prev => {
+            const selectedCount = prev.filter(c => c.selected).length;
+            return prev.map(c => {
+              if (c.id !== id || c.revealed) return c;
+              if (!c.selected && selectedCount >= 4) return c;
+              return { ...c, selected: !c.selected };
+            });
+          });
+        }
+
+        function revealSelected() {
+          if (phase !== "picking") return;
+          setCards(prev => prev.map(c => (c.selected ? { ...c, revealed: true } : c)));
+          setPhase("revealed");
+        }
+
+        function saveUsedCards() {
+          if (phase !== "revealed") return;
+          const used = cards.filter(c => c.selected);
+          if (used.length !== 4) return;
+          setUsedGroups(prev => [...prev, used]);
+          setCards(prev => prev.filter(c => !c.selected));
+          setPhase("picking");
+        }
+
+        function addName() {
+          const t = newName.trim();
+          if (!t) return;
+          setRoster(prev => [...prev, t]);
+          setNewName("");
+        }
+        function removeName(index) {
+          setRoster(prev => prev.filter((_, i) => i !== index));
+        }
+        function saveRoster() {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(roster));
+          setShowRosterEditor(false);
+          setPhase("setup");
+        }
+
+        function mixGroup(index) {
+          setUsedGroups(prev => {
+            const next = prev.slice();
+            const group = next[index] ? next[index].slice() : [];
+            if (group.length !== 4) return prev;
+            next[index] = shuffle(group);
+            return next;
+          });
+        }
+
+        const selectedCount = cards.filter(c => c.selected).length;
+
+        return (
+          <div className="min-h-screen w-full bg-slate-50 text-slate-900 flex flex-col items-center">
+            <header className="w-full max-w-5xl px-4 pt-8 pb-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h1 className="text-2xl sm:text-3xl font-bold">Bo's finurlige matchopsætning</h1>
+                  <p className="text-sm sm:text-base font-semibold text-slate-700 mt-1">© Bo Rasmussen 2025</p>
+                </div>
+                <button onClick={() => setShowRosterEditor(true)} className="px-3 py-2 rounded-xl bg-slate-200 hover:bg-slate-300">Rediger den faste trup</button>
+              </div>
+            </header>
+
+            {showRosterEditor && (
+              <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+                <div className="bg-white rounded-xl p-6 w-full max-w-md shadow-lg">
+                  <h2 className="text-lg font-semibold mb-4">Rediger den faste trup</h2>
+                  <ul className="mb-4 max-h-60 overflow-y-auto divide-y">
+                    {roster.map((name, idx) => (
+                      <li key={idx} className="py-2 flex justify-between items-center">
+                        <span>{name}</span>
+                        <button onClick={() => removeName(idx)} className="text-red-600 hover:underline">Fjern</button>
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="flex gap-2 mb-4">
+                    <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Nyt navn" className="flex-1 border rounded px-3 py-2" />
+                    <button onClick={addName} className="bg-emerald-600 text-white px-3 py-2 rounded">Tilføj</button>
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <button onClick={() => setShowRosterEditor(false)} className="px-3 py-2 rounded bg-gray-300">Annullér</button>
+                    <button onClick={saveRoster} className="px-3 py-2 rounded bg-indigo-600 text-white">Gem</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <main className="w-full max-w-5xl px-4 pb-16 grid grid-cols-1 gap-6">
+              {phase === "setup" && (
+                <section className="bg-white rounded-2xl shadow p-4 sm:p-6">
+                  <h2 className="text-lg font-semibold mb-3">Den faste trup</h2>
+                  <p className="text-sm text-slate-600 mb-4">Fravælg spillere der ikke deltager i dag</p>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-3">
+                    {setupPlayers.map(p => (
+                      <button key={p.id} onClick={() => togglePlayer(p.id)} className={`px-3 py-2 rounded-xl border text-sm font-medium ${p.enabled ? "bg-emerald-50 border-emerald-300" : "bg-slate-100 border-slate-300 line-through text-slate-500"}`}>
+                        {p.name}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mt-4">
+                    <button onClick={startRound} className="px-4 py-2 rounded-xl bg-indigo-600 text-white">Start spiller udvælgelse</button>
+                  </div>
+                </section>
+              )}
+
+              {phase !== "setup" && (
+                <section className="bg-white rounded-2xl shadow p-4 sm:p-6">
+                  <h2 className="text-lg font-semibold mb-3">2) Vælg kort</h2>
+                  <div className="mt-2 text-sm text-slate-600">Bag hvert kort gemmer sig en spiller fra den faste trup. Vælg 4 kort og vend dem. De udgør nu en match. Er du tilfreds med valget, kan du gemme denne match og gå videre til valg af næste match.</div>
+                  <div className="mt-4 flex gap-2 flex-wrap">
+                    <button onClick={resetRound} className="px-4 py-2 rounded-xl bg-slate-800 text-white">Bland igen</button>
+                    <button onClick={revealSelected} disabled={selectedCount !== 4} className={`px-4 py-2 rounded-xl text-white ${selectedCount === 4 ? "bg-green-600" : "bg-slate-300 cursor-not-allowed"}`}>
+                      Vend valgte
+                    </button>
+                    {phase === "revealed" && (
+                      <button onClick={saveUsedCards} className="px-4 py-2 rounded-xl bg-rose-600 text-white">Gem fire valgte eller Bland igen</button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2 mt-4">
+                    {cards.map(card => (
+                      <button key={card.id} onClick={() => handleCardClick(card.id)} className={`aspect-square rounded-xl border flex items-center justify-center bg-blue-600 text-white transition-all duration-150 ${card.selected ? "ring-4 ring-red-500 brightness-110 scale-105" : "hover:brightness-105"}`} aria-pressed={!!card.selected}>
+                        {card.revealed ? (
+                          <span className="text-white font-semibold text-sm text-center px-1">{card.name}</span>
+                        ) : (
+                          <TennisBallIcon size={28} />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+
+                  {usedGroups.length > 0 && (
+                    <div className="mt-6 border-t pt-4 space-y-3">
+                      <h3 className="font-semibold mb-2">Gemte grupper</h3>
+                      {usedGroups.map((group, idx) => (
+                        <div key={idx} className="mb-2 pb-3 border-b last:border-b-0">
+                          <div className="flex items-center gap-3 mb-2">
+                            <div className="font-medium">Match #{idx + 1}</div>
+                            <button onClick={() => mixGroup(idx)} className="px-3 py-1 rounded-lg bg-slate-200 hover:bg-slate-300 text-sm">Remix match</button>
+                          </div>
+                          {group.length === 4 ? (
+                            <div className="flex items-center gap-3 flex-wrap">
+                              <TeamChip name={group[0].name} />
+                              <TeamChip name={group[1].name} />
+                              <span className="text-slate-600 text-sm font-medium">spiller imod</span>
+                              <TeamChip name={group[2].name} />
+                              <TeamChip name={group[3].name} />
+                            </div>
+                          ) : (
+                            <div className="flex gap-2 flex-wrap">
+                              {group.map(player => <TeamChip key={player.id} name={player.name} />)}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              )}
+            </main>
+          </div>
+        );
+      }
+
+      const root = ReactDOM.createRoot(document.getElementById("root"));
+      root.render(<App />);
+    </script>
+  </body>
 </html>
